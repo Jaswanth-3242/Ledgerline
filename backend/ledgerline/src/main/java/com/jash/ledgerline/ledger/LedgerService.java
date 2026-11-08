@@ -1,9 +1,9 @@
-// Adjust the package to match your project (e.g. com.example.ledgerline.ledger).
 package com.jash.ledgerline.ledger;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -20,7 +20,7 @@ public class LedgerService {
     /** 1 crore rupees in paise. Caps amounts so sums can never overflow a BIGINT. */
     static final long MAX_AMOUNT = 1_000_000_000L;
 
-    // --- exceptions: map these to 404 / 422 / 409 / 400 in a @RestControllerAdvice ---
+    // --- exceptions: mapped to 404 / 422 / 409 / 400 in ApiExceptionHandler ---
     public static class NotFoundException extends RuntimeException {
         public NotFoundException() { super("Account not found"); }
     }
@@ -39,44 +39,47 @@ public class LedgerService {
 
     private final JdbcTemplate jdbc;
     private final AuditService audit;
+    private final TransactionTemplate tx;
 
-    public LedgerService(JdbcTemplate jdbc, AuditService audit) {
+    public LedgerService(JdbcTemplate jdbc, AuditService audit, PlatformTransactionManager txManager) {
         this.jdbc = jdbc;
         this.audit = audit;
+        this.tx = new TransactionTemplate(txManager);
     }
 
     // ---------------------------------------------------------------- public API
     // actorId = authenticated user id from the SecurityContext, NEVER from the request body.
+    // No @Transactional here on purpose: run() controls exactly where the transaction starts and ends.
 
-    @Transactional
     public long deposit(long actorId, String idemKey, long accountId, long amount) {
-        validateAmount(amount);
-        String hash = hash("DEPOSIT", accountId, 0, amount);
-        return run("DEPOSIT", actorId, "acct:" + accountId, () ->
-                idempotent(actorId, idemKey, hash, () ->
-                        post("DEPOSIT", actorId, accountId,
-                                List.of(new Leg(accountId, amount), new Leg(systemAccountId(), -amount)))));
+        return run("DEPOSIT", actorId, "acct:" + accountId, () -> {
+            validateAmount(amount);
+            String hash = hash("DEPOSIT", accountId, 0, amount);
+            return idempotent(actorId, idemKey, hash, () ->
+                    post("DEPOSIT", actorId, accountId,
+                            List.of(new Leg(accountId, amount), new Leg(systemAccountId(), -amount))));
+        });
     }
 
-    @Transactional
     public long withdraw(long actorId, String idemKey, long accountId, long amount) {
-        validateAmount(amount);
-        String hash = hash("WITHDRAWAL", accountId, 0, amount);
-        return run("WITHDRAWAL", actorId, "acct:" + accountId, () ->
-                idempotent(actorId, idemKey, hash, () ->
-                        post("WITHDRAWAL", actorId, accountId,
-                                List.of(new Leg(accountId, -amount), new Leg(systemAccountId(), amount)))));
+        return run("WITHDRAWAL", actorId, "acct:" + accountId, () -> {
+            validateAmount(amount);
+            String hash = hash("WITHDRAWAL", accountId, 0, amount);
+            return idempotent(actorId, idemKey, hash, () ->
+                    post("WITHDRAWAL", actorId, accountId,
+                            List.of(new Leg(accountId, -amount), new Leg(systemAccountId(), amount))));
+        });
     }
 
-    @Transactional
     public long transfer(long actorId, String idemKey, long fromId, long toId, long amount) {
-        validateAmount(amount);
-        if (fromId == toId) throw new InvalidRequestException("Cannot transfer to the same account");
-        String hash = hash("TRANSFER", fromId, toId, amount);
-        return run("TRANSFER", actorId, "acct:" + fromId + "->" + toId, () ->
-                idempotent(actorId, idemKey, hash, () ->
-                        post("TRANSFER", actorId, fromId,
-                                List.of(new Leg(fromId, -amount), new Leg(toId, amount)))));
+        return run("TRANSFER", actorId, "acct:" + fromId + "->" + toId, () -> {
+            validateAmount(amount);
+            if (fromId == toId) throw new InvalidRequestException("Cannot transfer to the same account");
+            String hash = hash("TRANSFER", fromId, toId, amount);
+            return idempotent(actorId, idemKey, hash, () ->
+                    post("TRANSFER", actorId, fromId,
+                            List.of(new Leg(fromId, -amount), new Leg(toId, amount))));
+        });
     }
 
     // ------------------------------------------------------------------ internals
@@ -87,16 +90,25 @@ public class LedgerService {
         }
     }
 
-    /** Audit every attempt: OK rows commit with the ledger write, DENIED rows commit independently. */
+    /**
+     * One DB transaction per request.
+     *  - success: the OK audit row commits together with the ledger rows (all or nothing).
+     *  - failure: the transaction rolls back FIRST and releases its connection, and only then the
+     *    DENIED row is written. (Writing it from inside the failing transaction needed a second
+     *    connection while still holding the first, which can exhaust the pool under load.)
+     */
     private long run(String action, long actorId, String target, Supplier<Long> body) {
         try {
-            long txnId = body.get();
-            jdbc.update("INSERT INTO audit_log(actor_id, action, target, outcome, detail) VALUES (?,?,?,?,?)",
-                    actorId, action, target, "OK", "txn:" + txnId);
+            Long txnId = tx.execute(status -> {
+                long id = body.get();
+                jdbc.update("INSERT INTO audit_log(actor_id, action, target, outcome, detail) VALUES (?,?,?,?,?)",
+                        actorId, action, target, "OK", "txn:" + id);
+                return id;
+            });
             return txnId;
         } catch (RuntimeException e) {
             audit.log(actorId, action, target, "DENIED", e.getClass().getSimpleName());
-            throw e; // outer transaction rolls back; the audit row above does not
+            throw e; // if this audit write fails the request fails too (fail closed)
         }
     }
 

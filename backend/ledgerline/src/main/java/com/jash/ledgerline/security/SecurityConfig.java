@@ -39,13 +39,14 @@ public class SecurityConfig {
     }
 
     @Bean
-    SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+    SecurityFilterChain filterChain(HttpSecurity http, AuditingAccessDeniedHandler deniedHandler) throws Exception {
         http
             .csrf(csrf -> csrf.disable()) // stateless API, no cookies/sessions, so no CSRF surface
             .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                     .requestMatchers("/api/health").permitAll()
                     .anyRequest().authenticated())   // everything else needs a login
+            .exceptionHandling(e -> e.accessDeniedHandler(deniedHandler)) // audit every 403
             .httpBasic(Customizer.withDefaults());
         return http.build();
     }
