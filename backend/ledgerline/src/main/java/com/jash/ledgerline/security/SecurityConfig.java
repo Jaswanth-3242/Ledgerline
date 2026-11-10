@@ -3,7 +3,6 @@ package com.jash.ledgerline.security;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -12,6 +11,7 @@ import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.www.BasicAuthenticationFilter;
 
 import java.util.List;
 
@@ -44,15 +44,19 @@ public class SecurityConfig {
     }
 
     @Bean
-    SecurityFilterChain filterChain(HttpSecurity http, AuditingAccessDeniedHandler deniedHandler) throws Exception {
+    SecurityFilterChain filterChain(HttpSecurity http, AuditingAccessDeniedHandler deniedHandler,
+                                    FailedAuthEntryPoint entryPoint, RateLimiter limiter) throws Exception {
         http
             .csrf(csrf -> csrf.disable()) // stateless API, no cookies/sessions, so no CSRF surface
             .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                     .requestMatchers("/api/health", "/api/ready", "/api/auth/register").permitAll()
                     .anyRequest().authenticated())   // everything else needs a login
-            .exceptionHandling(e -> e.accessDeniedHandler(deniedHandler)) // audit every 403
-            .httpBasic(Customizer.withDefaults());
+            .exceptionHandling(e -> e
+                    .accessDeniedHandler(deniedHandler)      // audit every 403
+                    .authenticationEntryPoint(entryPoint))   // count every failed login
+            .httpBasic(basic -> basic.authenticationEntryPoint(entryPoint))
+            .addFilterBefore(new RateLimitFilter(limiter), BasicAuthenticationFilter.class);
         return http.build();
     }
 }

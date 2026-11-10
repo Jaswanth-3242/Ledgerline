@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Registration, onboarding, admin controls, disabled users, health/readiness. Run: ./mvnw test */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = "app.ratelimit.enabled=false")
 class OnboardingIntegrationTest {
 
     static final String PW = "Test@1234!!";
