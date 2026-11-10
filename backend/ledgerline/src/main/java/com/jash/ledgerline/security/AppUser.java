@@ -11,8 +11,9 @@ public class AppUser extends User {
     private final long id;
     private final String role;
 
-    public AppUser(long id, String username, String passwordHash, String role) {
-        super(username, passwordHash, List.of(new SimpleGrantedAuthority("ROLE_" + role)));
+    public AppUser(long id, String username, String passwordHash, String role, boolean enabled) {
+        super(username, passwordHash, enabled, true, true, true,
+                List.of(new SimpleGrantedAuthority("ROLE_" + role)));
         this.id = id;
         this.role = role;
     }

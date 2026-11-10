@@ -1,5 +1,6 @@
 package com.jash.ledgerline.api;
 
+import com.jash.ledgerline.ledger.ConflictException;
 import com.jash.ledgerline.ledger.LedgerService;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
@@ -34,8 +35,8 @@ public class ApiExceptionHandler {
         return reply(HttpStatus.UNPROCESSABLE_ENTITY, e.getMessage());
     }
 
-    @ExceptionHandler(LedgerService.IdempotencyConflictException.class)
-    ResponseEntity<ApiError> idempotency(LedgerService.IdempotencyConflictException e) {
+    @ExceptionHandler({LedgerService.IdempotencyConflictException.class, ConflictException.class})
+    ResponseEntity<ApiError> conflict(RuntimeException e) {
         return reply(HttpStatus.CONFLICT, e.getMessage());
     }
 

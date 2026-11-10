@@ -24,14 +24,19 @@ public class SecurityConfig {
         return new BCryptPasswordEncoder();
     }
 
-    /** Loads the user (with role) from our users table. */
+    /**
+     * Loads the user (with role and status) from the DB on EVERY request (stateless Basic auth),
+     * so disabling a user or changing a role takes effect immediately.
+     * Usernames are stored lower-case, so the lookup is case-insensitive.
+     */
     @Bean
     UserDetailsService userDetailsService(JdbcTemplate jdbc) {
         return username -> {
             List<AppUser> found = jdbc.query(
-                    "SELECT id, username, password_hash, role FROM users WHERE username = ?",
+                    "SELECT id, username, password_hash, role, status FROM users WHERE username = lower(?)",
                     (rs, n) -> new AppUser(rs.getLong("id"), rs.getString("username"),
-                            rs.getString("password_hash"), rs.getString("role")),
+                            rs.getString("password_hash"), rs.getString("role"),
+                            "ACTIVE".equals(rs.getString("status"))),
                     username);
             if (found.isEmpty()) throw new UsernameNotFoundException("Bad credentials");
             return found.get(0);
@@ -44,7 +49,7 @@ public class SecurityConfig {
             .csrf(csrf -> csrf.disable()) // stateless API, no cookies/sessions, so no CSRF surface
             .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
-                    .requestMatchers("/api/health").permitAll()
+                    .requestMatchers("/api/health", "/api/ready", "/api/auth/register").permitAll()
                     .anyRequest().authenticated())   // everything else needs a login
             .exceptionHandling(e -> e.accessDeniedHandler(deniedHandler)) // audit every 403
             .httpBasic(Customizer.withDefaults());

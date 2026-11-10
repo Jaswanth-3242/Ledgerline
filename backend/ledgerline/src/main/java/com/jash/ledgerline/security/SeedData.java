@@ -1,13 +1,20 @@
 package com.jash.ledgerline.security;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
-/** Demo users, created only when the users table is empty. Set SEED_PASSWORD to change the demo password. */
+/**
+ * Demo users (admin, auditor, alice, bob), created only when the users table is empty.
+ * Set SEED_PASSWORD to choose the demo password; set SEED_DEMO=false to skip demo data entirely.
+ */
 @Component
+@Order(1)
+@ConditionalOnProperty(name = "seed.demo", havingValue = "true", matchIfMissing = true)
 public class SeedData implements CommandLineRunner {
 
     private final JdbcTemplate jdbc;
