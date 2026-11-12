@@ -7,7 +7,7 @@ Live demo: https://ledgerline-wwji.onrender.com
 A Java Spring Boot + PostgreSQL service where money moves through a double-entry ledger, the same request never pays twice, and every attempt (allowed or denied) leaves an audit row. It serves a small web UI at `/` and a JSON API under `/api`.
 
 ## Demo accounts (live site and local)
-Password for all four: Jaswanth3242
+Password for all four: Jaswanth@3242
 
 | Username | Role | Can do |
 |---|---|---|
