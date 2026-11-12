@@ -50,7 +50,7 @@ public class SecurityConfig {
             .csrf(csrf -> csrf.disable()) // stateless API, no cookies/sessions, so no CSRF surface
             .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
-                    .requestMatchers("/api/health", "/api/ready", "/api/auth/register").permitAll()
+                    .requestMatchers("/", "/index.html", "/favicon.ico", "/api/health", "/api/ready", "/api/auth/register").permitAll()
                     .anyRequest().authenticated())   // everything else needs a login
             .exceptionHandling(e -> e
                     .accessDeniedHandler(deniedHandler)      // audit every 403

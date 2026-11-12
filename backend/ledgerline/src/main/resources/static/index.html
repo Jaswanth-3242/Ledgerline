@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LedgerLine</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:920px;margin:20px auto;padding:0 12px;color:#222}
+h1{margin-bottom:4px}
+h2{margin-top:26px;border-bottom:1px solid #ddd;padding-bottom:4px}
+input,select,button{padding:6px 8px;margin:2px;font-size:14px}
+table{border-collapse:collapse;width:100%;font-size:14px}
+td,th{border:1px solid #ddd;padding:4px 6px;text-align:left}
+.ok{color:#0a6b2d}.err{color:#b00020}
+#msg{min-height:22px;margin:8px 0;font-weight:600}
+.card{border:1px solid #ddd;border-radius:6px;padding:10px;margin:8px 0}
+</style>
+</head>
+<body>
+<h1>LedgerLine</h1>
+<div>Money movement with a ledger you can prove. Amounts are shown in INR, stored in paise.</div>
+<div id="msg"></div>
+
+<div id="login" class="card">
+  <input id="u" placeholder="username" autocomplete="username">
+  <input id="p" type="password" placeholder="password" autocomplete="current-password">
+  <button onclick="login()">Log in</button>
+  <button onclick="reg()">Register (new account holder)</button>
+</div>
+
+<div id="app" hidden>
+  <div>Signed in as <b id="who"></b> <button onclick="logout()">Log out</button></div>
+
+  <div id="holder" hidden>
+    <h2>My accounts</h2>
+    <div id="accts"></div>
+    <div>No account yet? <button onclick="reqOnb()">Request an account</button></div>
+    <div id="onb"></div>
+
+    <h2>Move money</h2>
+    <div class="card">
+      <select id="mt">
+        <option value="deposit">Deposit</option>
+        <option value="withdraw">Withdraw</option>
+        <option value="transfer">Transfer</option>
+      </select>
+      <input id="ma" placeholder="my account id" size="12">
+      <input id="mto" placeholder="to account id (transfer only)" size="24">
+      <input id="mamt" placeholder="amount in INR" size="14">
+      <button onclick="doMoney()">Submit</button>
+    </div>
+    <div id="stmt"></div>
+  </div>
+
+  <div id="admin" hidden>
+    <h2>Admin: users</h2>
+    <div id="users"></div>
+    <h2>Admin: pending account requests</h2>
+    <div id="pending"></div>
+  </div>
+
+  <div id="auditsec" hidden>
+    <h2>Reconciliation</h2>
+    <div id="recon"></div>
+    <h2>Audit log (latest 50)</h2>
+    <div id="audit"></div>
+  </div>
+</div>
+
+<script>
+var auth = null, me = null;
+function $(id){ return document.getElementById(id); }
+function esc(s){ return String(s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function money(p){ return (p/100).toFixed(2); }
+function show(t, bad){ var m = $('msg'); m.textContent = t; m.className = bad ? 'err' : 'ok'; }
+function table(heads, rows){
+  return '<table><tr>' + heads.map(function(h){ return '<th>' + esc(h) + '</th>'; }).join('') + '</tr>' +
+    rows.map(function(r){ return '<tr>' + r.map(function(c){ return '<td>' + c + '</td>'; }).join('') + '</tr>'; }).join('') + '</table>';
+}
+
+async function api(method, path, body, key){
+  var h = {'Content-Type': 'application/json'};
+  if (auth) h['Authorization'] = auth;
+  if (key) h['Idempotency-Key'] = key;
+  var r = await fetch(path, {method: method, headers: h, body: body ? JSON.stringify(body) : undefined});
+  var data = null;
+  try { data = await r.json(); } catch (e) {}
+  if (!r.ok) throw new Error((data && data.message) || ('HTTP ' + r.status));
+  return data;
+}
+
+async function login(){
+  var u = $('u').value.trim(), p = $('p').value;
+  auth = 'Basic ' + btoa(u + ':' + p);
+  try {
+    me = await api('GET', '/api/auth/me');
+    $('login').hidden = true; $('app').hidden = false;
+    $('who').textContent = me.username + ' (' + me.role + ')';
+    show('', false);
+    loadAll();
+  } catch (e) { auth = null; me = null; show(e.message, true); }
+}
+function logout(){ auth = null; me = null; $('app').hidden = true; $('login').hidden = false; $('p').value = ''; show('', false); }
+async function reg(){
+  try {
+    await api('POST', '/api/auth/register', {username: $('u').value.trim(), password: $('p').value});
+    show('Registered. Now log in, then request an account.', false);
+  } catch (e) { show(e.message, true); }
+}
+
+async function loadAll(){
+  try {
+    $('holder').hidden = me.role !== 'HOLDER';
+    $('admin').hidden = me.role !== 'ADMIN';
+    $('auditsec').hidden = !(me.role === 'ADMIN' || me.role === 'AUDITOR');
+    if (me.role === 'HOLDER') await loadHolder();
+    if (me.role === 'ADMIN') await loadAdmin();
+    if (me.role === 'ADMIN' || me.role === 'AUDITOR') await loadAudit();
+  } catch (e) { show(e.message, true); }
+}
+
+async function loadHolder(){
+  var accts = await api('GET', '/api/accounts');
+  $('accts').innerHTML = accts.length
+    ? table(['ID','Name','Balance (INR)',''], accts.map(function(a){
+        return [a.id, esc(a.name), money(a.balance), '<button onclick="stmt(' + a.id + ')">Statement</button>']; }))
+    : '<p>No accounts yet.</p>';
+  var ob = await api('GET', '/api/onboarding');
+  $('onb').innerHTML = ob.length
+    ? table(['Request','Status','Created'], ob.map(function(o){ return [o.id, esc(o.status), esc(o.createdAt)]; }))
+    : '';
+}
+async function reqOnb(){
+  try { await api('POST', '/api/onboarding'); show('Request sent. An admin must approve it.', false); loadAll(); }
+  catch (e) { show(e.message, true); }
+}
+async function doMoney(){
+  var t = $('mt').value, acct = parseInt($('ma').value, 10), to = parseInt($('mto').value, 10);
+  var amt = Math.round(parseFloat($('mamt').value) * 100);
+  if (!(amt > 0)) { show('Enter a positive amount', true); return; }
+  var key = crypto.randomUUID();
+  try {
+    var r;
+    if (t === 'transfer') r = await api('POST', '/api/transfers', {fromAccountId: acct, toAccountId: to, amount: amt}, key);
+    else r = await api('POST', '/api/accounts/' + acct + '/' + t, {amount: amt}, key);
+    show('Done. Transaction ' + r.transactionId, false);
+    loadAll();
+  } catch (e) { show(e.message, true); }
+}
+async function stmt(id){
+  try {
+    var e = await api('GET', '/api/accounts/' + id + '/statement');
+    $('stmt').innerHTML = '<h3>Statement for account ' + id + '</h3>' +
+      table(['Entry','Txn','Type','Amount (INR)','When'], e.map(function(x){
+        return [x.entryId, x.transactionId, esc(x.type), money(x.amount), esc(x.createdAt)]; }));
+  } catch (err) { show(err.message, true); }
+}
+
+async function loadAdmin(){
+  var u = await api('GET', '/api/admin/users');
+  $('users').innerHTML = table(['ID','User','Role','Status',''], u.map(function(x){
+    var next = x.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE';
+    return [x.id, esc(x.username), esc(x.role), esc(x.status),
+      '<button onclick="setStatus(' + x.id + ',\'' + next + '\')">' + (next === 'DISABLED' ? 'Disable' : 'Enable') + '</button>'];
+  }));
+  var p = await api('GET', '/api/admin/onboarding');
+  $('pending').innerHTML = p.length
+    ? table(['Request','User','Created',''], p.map(function(x){
+        return [x.id, esc(x.username), esc(x.createdAt),
+          '<button onclick="decide(' + x.id + ',true)">Approve</button><button onclick="decide(' + x.id + ',false)">Reject</button>'];
+      }))
+    : '<p>No pending requests.</p>';
+}
+async function setStatus(id, s){
+  try { await api('POST', '/api/admin/users/' + id + '/status', {status: s}); loadAll(); }
+  catch (e) { show(e.message, true); }
+}
+async function decide(id, ok){
+  try { await api('POST', '/api/admin/onboarding/' + id + '/decision', {approve: ok}); show(ok ? 'Approved' : 'Rejected', false); loadAll(); }
+  catch (e) { show(e.message, true); }
+}
+
+async function loadAudit(){
+  var a = await api('GET', '/api/audit');
+  $('audit').innerHTML = table(['ID','Actor','Action','Target','Outcome','Detail','When'], a.slice(0, 50).map(function(x){
+    return [x.id, x.actorId == null ? '' : x.actorId, esc(x.action), esc(x.target || ''), esc(x.outcome), esc(x.detail || ''), esc(x.createdAt)];
+  }));
+  var r = await api('GET', '/api/reconcile');
+  $('recon').innerHTML = '<b>Books balance: ' + (r.ok ? 'YES' : 'NO') + '</b> (entries total ' + r.entriesTotal +
+    ', mismatched accounts: ' + esc(r.mismatchedAccountIds.join(',') || 'none') + ')';
+}
+</script>
+</body>
+</html>
