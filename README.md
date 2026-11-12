@@ -1,13 +1,13 @@
 # LedgerLine (BalanceVault): money movement with a ledger you can prove
 
-Live demo: REPLACE_WITH_LIVE_URL
+Live demo: https://ledgerline-wwji.onrender.com
 (Hosted on a free tier: the first request after idle can take about a minute to wake up.)
 
 ## What it is
 A Java Spring Boot + PostgreSQL service where money moves through a double-entry ledger, the same request never pays twice, and every attempt (allowed or denied) leaves an audit row. It serves a small web UI at `/` and a JSON API under `/api`.
 
 ## Demo accounts (live site and local)
-Password for all four: REPLACE_WITH_SEED_PASSWORD
+Password for all four: Jaswanth3242
 
 | Username | Role | Can do |
 |---|---|---|
