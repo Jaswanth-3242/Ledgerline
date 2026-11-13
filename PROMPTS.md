@@ -37,3 +37,26 @@
 - What I did: added an access-denied handler that writes an ACCESS_DENIED row (who, which URL) and then returns 403.
 - Verified: an automated test has an auditor try to deposit, expects 403, expects the balance unchanged, and expects exactly one ACCESS_DENIED row for that auditor. Other tests check that another user's account gives 404 and writes DENIED rows, that a holder cannot create accounts (403), that no login gives 401, and that editing or deleting ledger rows directly in SQL fails.
 - Commit: https://github.com/Jaswanth-3242/Ledgerline/commits/main
+
+## 2026-11-10: Redis rate limiting, tests that would have broken each other
+- Asked Claude for: rate limiting on login, registration and money endpoints using Redis.
+- Tool produced: a filter that runs before authentication, fixed-window counters in Redis using one atomic Lua script (increment and expiry together), a lockout after 5 failed logins per IP and username, and a client-IP rule that trusts only the last X-Forwarded-For entry when running behind a trusted proxy.
+- What was wrong or risky: the new limits would have made my existing integration tests fail (they register many users from the same IP and would hit the 5-sign-ups limit), and a counter incremented in two separate steps could be left without an expiry and block someone forever.
+- What I did: switched the limiter off for the older test classes with a property, gave the rate-limit tests their own random client IPs, used the single Lua script, and made Redis outages fail open with a logged warning.
+- Verified: the test run shows 27 tests, 0 failures; the rate-limit tests expect 401 five times then 429 for failed logins, and 429 on the 6th sign-up from one IP.
+- Commit: https://github.com/Jaswanth-3242/Ledgerline/commits/main
+
+## 2026-11-10: Authorisation for sign-up and onboarding (mass assignment and admin controls)
+- Asked Claude for: public registration, an admin-approved account request flow and admin user management.
+- Tool produced: a register endpoint that has no role field at all and always creates a HOLDER, an onboarding table with a unique index so a user can only have one pending request, admin-only endpoints for approving and for disabling users (users are reloaded from the database on every request so disabling takes effect immediately), and an audit row for every admin action.
+- What I tested: registering with an extra "role":"ADMIN" field never produces an admin; a holder gets 403 on the admin queue and cannot approve; approving twice gives 409; an admin cannot disable themselves; a disabled user gets 401 on the next request.
+- What was wrong: [write in your own words anything you had to fix here, or remove this line]
+- Commit: https://github.com/Jaswanth-3242/Ledgerline/commits/main
+
+## 2026-11-12: Web UI and deployment
+- Asked Claude for: a minimal UI served by the same Spring Boot app, a Dockerfile, and the steps to deploy on Render with PostgreSQL and Redis.
+- Tool produced: a single index.html that calls the API with HTTP Basic and escapes everything it shows, a multi-stage Dockerfile, and Render settings (JDBC URL built from the internal host, environment variables, health check on /api/ready).
+- What was wrong or risky: Spring Security required login for every path, so the page itself could not load until I allowed "/" and "/index.html"; the hosting provider may not let the app create a limited database role, so the limited-role layer may not apply on the hosted database; the default demo password is visible in the public source, so the deployment overrides it with SEED_PASSWORD.
+- What I did: allowed the static page in the security config, set the demo password and the other secrets as environment variables on Render instead of in code, and listed the database-role limitation in the README and the submission form instead of claiming it.
+- Verified: [write what you actually checked on the live site, for example: opened the link in an incognito window, logged in as alice, did a deposit and a transfer, saw the statement, and checked the audit log and the "Books balance: YES" line as admin]
+- Commit: https://github.com/Jaswanth-3242/Ledgerline/commits/main
